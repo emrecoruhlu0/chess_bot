@@ -13,31 +13,47 @@ games.csv (20.058 oyun)
    │  her oyunu yeniden oyna, pozisyonlara oyunun SONUCUNU etiketle
    ▼
 training/  (Python — offline, bir kez)
-   prepare_data.py → dataset.npz   (115.939 pozisyon, 12 özellik)
-   train.py        → lojistik regresyon  (özellik → kazanma olasılığı)
-   export_model.py → web/model.json (ağırlıklar)
+   prepare_data.py → dataset.npz   (115.939 pozisyon, 23 özellik)
+   train.py        → LR baseline + küçük MLP, karşılaştır, kazananı seç
+   export_model.py → web/model.json (model + ölçekleyici)
    ▼
 web/  (JavaScript — tarayıcı)
-   features.js  → pozisyondan 12 özellik (features.py ile BİREBİR aynı)
-   evaluate.js  → sigmoid(w·x + b) = beyazın kazanma olasılığı
-   engine.js    → minimax + alpha-beta, yaprakları evaluate.js ile skorlar
+   features.js  → pozisyondan 23 özellik (features.py ile BİREBİR aynı)
+   evaluate.js  → model (LR veya MLP) → beyazın kazanma olasılığı
+   engine.js    → minimax + alpha-beta + quiescence + TT + iterative deepening
    bot.worker.js→ aramayı ayrı thread'de çalıştırır (UI donmaz)
    app.js       → tahta çizimi + oyun akışı
 ```
 
 ### Model
-Lojistik regresyon. 12 özellik (hepsi beyaz perspektifinden):
-- **Materyal farkı** (5): piyon, at, fil, kale, vezir sayı farkı
-- **Piece-square skoru** (6): taşların konumuna göre ağırlıklı toplam (P,N,B,R,Q,K)
-- **Sıra** (1): beyaz mı oynayacak
+İki model eğitilir, test log-loss'una göre kazanan seçilir (şu an: **MLP**):
+- **Lojistik regresyon** — tek doğrusal katman, açıklanabilir ağırlıklar
+- **Küçük MLP** — tek gizli katman (24 nöron, ReLU), doğrusal olmayan ilişkiler
 
-Model, kim kazandı verisinden taş değerlerini kendiliğinden öğrendi
-(vezir > kale > fil ≈ at > piyon) — yani satranç sezgisi veriden çıktı.
+Özellikler `StandardScaler` ile ölçeklenir; ölçekleyici model.json'a yazılır ve
+JS tarafında birebir aynı uygulanır.
+
+**23 özellik** (hepsi beyaz perspektifinden, beyaz − siyah):
+- **Materyal** (5): piyon, at, fil, kale, vezir sayı farkı
+- **Piece-square** (6): taşların konumuna göre ağırlıklı toplam (P,N,B,R,Q,K)
+- **Sıra** (1): beyaz mı oynayacak
+- **Mobility** (5): her taş tipinin pseudo-legal hamle sayısı
+- **Piyon yapısı** (3): ikili (doubled), izole, geçer (passed) piyon farkı
+- **Şah güvenliği** (2): şah önü piyon şilti, şaha saldıran taş sayısı
+- **Açık dosya** (1): yarı-açık dosyadaki kale sayısı
+
+> Yeni özellikler chess.js/python-chess hamle üretimi KULLANMAZ; iki dilde de
+> birebir aynı, elle yazılmış pseudo-legal saldırı üreteciyle hesaplanır.
+> Böylece Python↔JS parity garanti edilir (`verify_parity.js`).
 
 ### Arama
 Minimax + alpha-beta budama. Beyaz skoru maksimize, siyah minimize eder.
-Yaprak pozisyonlar ML modeliyle skorlanır; mat/pat özel ele alınır.
-Hamle sıralaması (MVV-LVA) ile budama hızlandırılır.
+- **Quiescence search**: yaprakta alış/terfi zincirlerini araştırır (taktiksel körlüğü azaltır)
+- **Transposition table**: aynı pozisyonu (farklı yoldan gelince) yeniden hesaplamaz
+- **Iterative deepening**: zaman bütçesine kadar kademeli derinleşir; en iyi hamle sıralamayı tohumlar
+- **Eval cache** + **MVV-LVA** hamle sıralaması ile hızlandırılır
+
+Zorluk seviyeleri zaman bütçesine bağlıdır: kolay 300ms, orta 1000ms, zor 2500ms.
 
 ## Çalıştırma
 
@@ -65,10 +81,15 @@ cd training
 ## Testler
 ```powershell
 cd web
-node verify_parity.js   # Python ve JS özellikleri birebir aynı mı?
+node verify_parity.js   # Python ve JS ÖZELLİKLERİ birebir aynı mı? (23 özellik)
+node verify_eval.js     # Python ve JS MODEL çıktısı birebir aynı mı? (scaler + MLP)
 node test_engine.js     # bedava taş / mate-in-1 / açılış doğru mu?
 node test_game.js       # bot kendi kendine tam bir oyun oynuyor mu?
+node ab_match.js 12 200 # yeni bot eski bottan güçlü mü? (A/B maçı)
 ```
+> `verify_eval.js` için önce `training/dump_eval_cases.py` çalıştırılıp
+> `eval_cases.json` üretilmelidir (parity_cases.json'dan sonra). `ab_match.js`
+> ise `model.json` + `model_old.json` (eski modelin yedeği) ile çalışır.
 
 > **Önemli:** `training/features.py` ve `web/features.js` aynı sayıları üretmek
 > zorundadır. Birini değiştirirsen diğerini güncelle ve `verify_parity.js` çalıştır.
@@ -78,24 +99,30 @@ node test_game.js       # bot kendi kendine tam bir oyun oynuyor mu?
 chess_bot/
 ├── games.csv              ham veri (Lichess 20k)
 ├── training/              Python eğitim hattı
-│   ├── features.py        özellik çıkarımı (Python)
+│   ├── features.py        özellik çıkarımı (Python — 23 özellik)
 │   ├── prepare_data.py    veri hazırlama
-│   ├── train.py           model eğitimi
-│   └── export_model.py    JSON'a aktarım
+│   ├── train.py           LR + MLP eğitimi, karşılaştırma
+│   ├── export_model.py    JSON'a aktarım (model + ölçekleyici)
+│   ├── dump_parity_cases.py / dump_eval_cases.py   parity test girdileri
 ├── web/                   tarayıcı uygulaması
 │   ├── index.html / style.css
 │   ├── features.js        özellik çıkarımı (JS — Python ile birebir)
-│   ├── evaluate.js        model değerlendirme
-│   ├── engine.js          minimax + alpha-beta
+│   ├── evaluate.js        model değerlendirme (LR/MLP)
+│   ├── engine.js          minimax + alpha-beta + quiescence + TT + ID
 │   ├── bot.worker.js      bot worker'ı
 │   ├── app.js             UI + oyun akışı
 │   ├── server.js          statik sunucu (bağımlılıksız)
-│   └── model.json         eğitilmiş ağırlıklar
+│   ├── verify_parity.js / verify_eval.js / ab_match.js   testler
+│   └── model.json         eğitilmiş model (+ ölçekleyici)
 └── model/                 modelin arşiv kopyası
 ```
 
 ## Olası iyileştirmeler
 - Açılış kitabı (games.csv'den en sık açılışlar)
-- Daha zengin özellikler (şah güvenliği, piyon yapısı, hareket sayısı)
-- Lojistik regresyon yerine küçük sinir ağı (aynı hat, model.json formatı değişir)
-- Quiescence search (taş alma zincirlerinde daha derin bakış)
+- Daha derin/çok katmanlı MLP, daha fazla eğitim verisi
+- Stockfish ile centipawn etiketleme (oyun sonucu yerine daha kaliteli sinyal)
+- Endgame tabanları, oyun fazı (açılış/orta/son) özelliği
+
+> Önceki listedeki şu maddeler **tamamlandı**: zengin özellikler (şah güvenliği,
+> piyon yapısı, mobility), küçük sinir ağı (MLP), quiescence search,
+> transposition table ve iterative deepening.
