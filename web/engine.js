@@ -208,8 +208,12 @@ export function makeEngine(evaluator, Chess, opts) {
 
       for (const m of moves) {
         game.move(m);
-        const score = alphabeta(game, depth - 1, alpha, beta, 1, deadline, ctr);
-        game.undo();
+        let score;
+        try {
+          score = alphabeta(game, depth - 1, alpha, beta, 1, deadline, ctr);
+        } finally {
+          game.undo(); // TIME_UP atilsa bile tahtayi geri al (kirli birakma)
+        }
         evaluated++;
         if (white) {
           if (score > bestScore) { bestScore = score; bestMove = m; }
@@ -243,26 +247,29 @@ export function makeEngine(evaluator, Chess, opts) {
       const game = new Chess(fen);
       if (game.isGameOver()) return { move: null, score: 0, evaluated: 0, depthReached: 0 };
 
-      const deadline = timeMs > 0 ? Date.now() + timeMs : Infinity;
+      const timed = timeMs > 0;
+      const startTime = Date.now();
       const ctr = { n: 0 };
 
       let result = null;
       let depthReached = 0;
       for (let d = 1; d <= maxDepth; d++) {
+        // Derinlik 1 HER ZAMAN zaman sinirsiz tamamlanir: gecerli bir hamle
+        // garanti edilir. Sonraki derinlikler zaman butcesine tabidir.
+        const deadline = (timed && d > 1) ? Date.now() + timeMs : Infinity;
+        // Her derinlikte TAZE tahta: TIME_UP arama ortasinda atilirsa onceki
+        // tahta kirli kalabilir; taze klon bir sonraki derinligi korur.
+        const board = new Chess(fen);
         try {
-          const r = searchRoot(game, d, deadline, ctr);
+          const r = searchRoot(board, d, deadline, ctr);
           result = r;
           depthReached = d;
         } catch (err) {
-          if (err === TIME_UP) break; // zaman doldu: son tam derinligi koru
+          if (err === TIME_UP) break; // zaman doldu: son TAM derinligi koru
           throw err;
         }
-      }
-
-      // Hic derinlik tamamlanamadiysa (cok kisa butce) en azindan derinlik 1.
-      if (!result) {
-        result = searchRoot(game, 1, Infinity, { n: 0 });
-        depthReached = 1;
+        // Zaman dolduysa daha derine inme (bir sonraki tam derinlik bitmez).
+        if (timed && Date.now() >= startTime + timeMs) break;
       }
 
       return {
