@@ -109,55 +109,62 @@
                        [-1, 0], [-1, -1], [0, -1], [1, -1]];
   const BISHOP_DIRS = [[1, 1], [1, -1], [-1, 1], [-1, -1]];
   const ROOK_DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+  const QUEEN_DIRS = [[1, 1], [1, -1], [-1, 1], [-1, -1], [1, 0], [-1, 0], [0, 1], [0, -1]];
 
   function onBoard(f, r) {
     return f >= 0 && f < 8 && r >= 0 && r < 8;
   }
 
+  // grid (Int8Array): 0=bos, dolu kare icin sifirdan farkli (isaret = renk).
   // Kayan tasin ulasabilecegi kare sayisi; ilk dolu karede durur (alis sayilir).
   function slideCount(grid, f, r, dirs) {
     let cnt = 0;
-    for (const [df, dr] of dirs) {
+    for (let d = 0; d < dirs.length; d++) {
+      const df = dirs[d][0], dr = dirs[d][1];
       let nf = f + df, nr = r + dr;
       while (onBoard(nf, nr)) {
         cnt += 1;
-        if (grid[nr * 8 + nf] !== null) break;
+        if (grid[nr * 8 + nf] !== 0) break;
         nf += df; nr += dr;
       }
     }
     return cnt;
   }
 
-  // grid[r*8+f] uzerindeki (piyon disi) tas, targetSq'yi pseudo-saldiriyor mu?
-  function attacksSquare(grid, f, r, targetSq, type) {
-    const tf = targetSq % 8, tr = (targetSq - tf) / 8;
-    if (type === "n") {
-      for (const [df, dr] of KNIGHT_DELTAS) {
-        if (f + df === tf && r + dr === tr) return true;
+  // grid[r*8+f] uzerindeki (piyon disi) tas, (tf,tr) hedefini pseudo-saldiriyor mu?
+  // pieceCode: tipin mutlak kodu (2=n,3=b,4=r,5=q,6=k).
+  function attacksTarget(grid, f, r, tf, tr, pieceCode) {
+    if (pieceCode === 2) { // at
+      for (let k = 0; k < KNIGHT_DELTAS.length; k++) {
+        if (f + KNIGHT_DELTAS[k][0] === tf && r + KNIGHT_DELTAS[k][1] === tr) return true;
       }
       return false;
     }
-    if (type === "k") {
-      for (const [df, dr] of KING_DELTAS) {
-        if (f + df === tf && r + dr === tr) return true;
+    if (pieceCode === 6) { // sah
+      for (let k = 0; k < KING_DELTAS.length; k++) {
+        if (f + KING_DELTAS[k][0] === tf && r + KING_DELTAS[k][1] === tr) return true;
       }
       return false;
     }
     let dirs;
-    if (type === "b") dirs = BISHOP_DIRS;
-    else if (type === "r") dirs = ROOK_DIRS;
-    else if (type === "q") dirs = BISHOP_DIRS.concat(ROOK_DIRS);
+    if (pieceCode === 3) dirs = BISHOP_DIRS;
+    else if (pieceCode === 4) dirs = ROOK_DIRS;
+    else if (pieceCode === 5) dirs = QUEEN_DIRS;
     else return false;
-    for (const [df, dr] of dirs) {
+    for (let d = 0; d < dirs.length; d++) {
+      const df = dirs[d][0], dr = dirs[d][1];
       let nf = f + df, nr = r + dr;
       while (onBoard(nf, nr)) {
         if (nf === tf && nr === tr) return true;
-        if (grid[nr * 8 + nf] !== null) break;
+        if (grid[nr * 8 + nf] !== 0) break;
         nf += df; nr += dr;
       }
     }
     return false;
   }
+
+  // Tip harfi -> mutlak kod.
+  const TYPE_CODE = { p: 1, n: 2, b: 3, r: 4, q: 5, k: 6 };
 
   /*
    * FEN'in tahta kismini gezerek (feature) vektoru uretir.
@@ -170,8 +177,9 @@
 
     const material = { p: 0, n: 0, b: 0, r: 0, q: 0 };
     const pst = { p: 0, n: 0, b: 0, r: 0, q: 0, k: 0 };
-    // grid[sq] = { type, isWhite } ya da null. sq = rank*8 + file.
-    const grid = new Array(64).fill(null);
+    // grid (Int8Array): 0=bos; dolu kare = +kod (beyaz) / -kod (siyah).
+    // kod: p=1,n=2,b=3,r=4,q=5,k=6. sq = rank*8 + file.
+    const grid = new Int8Array(64);
 
     const ranks = boardPart.split("/"); // index 0 = rank 8, index 7 = rank 1
     for (let i = 0; i < 8; i++) {
@@ -186,7 +194,8 @@
         const isWhite = ch === ch.toUpperCase();
         const type = ch.toLowerCase(); // p,n,b,r,q,k
         const square = rank * 8 + file; // a1=0 ... h8=63
-        grid[square] = { type, isWhite };
+        const code = TYPE_CODE[type];
+        grid[square] = isWhite ? code : -code;
 
         let sq, sign;
         if (isWhite) {
@@ -212,45 +221,51 @@
     feats.push(sideToMove === "w" ? 1.0 : -1.0);
 
     // --- Yeni ozellikler: grid uzerinde, chess.js hamle uretimi olmadan ---
-    const mob = { p: 0, n: 0, b: 0, r: 0, q: 0 }; // beyaz - siyah (isaretli)
+    // (Mantik features.py ile birebir; burada sadece allocation/closure azaltarak
+    //  hizlandirilmistir, sonuc degismez.)
+    let mobP = 0, mobN = 0, mobB = 0, mobR = 0, mobQ = 0; // beyaz - siyah
     const wpFile = [0, 0, 0, 0, 0, 0, 0, 0];
     const bpFile = [0, 0, 0, 0, 0, 0, 0, 0];
-    let whiteKing = null, blackKing = null;
-    const whitePawns = [], blackPawns = []; // [file, rank]
+    let whiteKingSq = -1, blackKingSq = -1;
+    // Piyon ve kale karelerini duz dizilerde tut (kare indeksi).
+    const whitePawnSq = [], blackPawnSq = [];
     const whiteRooksFile = [], blackRooksFile = [];
 
     for (let sq = 0; sq < 64; sq++) {
-      const cell = grid[sq];
-      if (cell === null) continue;
-      const type = cell.type, isWhite = cell.isWhite;
-      const f = sq % 8, r = (sq - f) / 8;
+      const v = grid[sq];
+      if (v === 0) continue;
+      const isWhite = v > 0;
+      const code = isWhite ? v : -v; // mutlak tip kodu
+      const f = sq & 7, r = sq >> 3;
       const sign = isWhite ? 1 : -1;
 
-      if (type === "p") {
+      if (code === 1) { // piyon
         const pr = isWhite ? r + 1 : r - 1;
         let cnt = 0;
         if (onBoard(f - 1, pr)) cnt += 1;
         if (onBoard(f + 1, pr)) cnt += 1;
-        mob.p += sign * cnt;
-        if (isWhite) { wpFile[f] += 1; whitePawns.push([f, r]); }
-        else { bpFile[f] += 1; blackPawns.push([f, r]); }
-      } else if (type === "n") {
+        mobP += sign * cnt;
+        if (isWhite) { wpFile[f] += 1; whitePawnSq.push(sq); }
+        else { bpFile[f] += 1; blackPawnSq.push(sq); }
+      } else if (code === 2) { // at
         let cnt = 0;
-        for (const [df, dr] of KNIGHT_DELTAS) if (onBoard(f + df, r + dr)) cnt += 1;
-        mob.n += sign * cnt;
-      } else if (type === "b") {
-        mob.b += sign * slideCount(grid, f, r, BISHOP_DIRS);
-      } else if (type === "r") {
-        mob.r += sign * slideCount(grid, f, r, ROOK_DIRS);
+        for (let k = 0; k < KNIGHT_DELTAS.length; k++) {
+          if (onBoard(f + KNIGHT_DELTAS[k][0], r + KNIGHT_DELTAS[k][1])) cnt += 1;
+        }
+        mobN += sign * cnt;
+      } else if (code === 3) { // fil
+        mobB += sign * slideCount(grid, f, r, BISHOP_DIRS);
+      } else if (code === 4) { // kale
+        mobR += sign * slideCount(grid, f, r, ROOK_DIRS);
         (isWhite ? whiteRooksFile : blackRooksFile).push(f);
-      } else if (type === "q") {
-        mob.q += sign * slideCount(grid, f, r, BISHOP_DIRS.concat(ROOK_DIRS));
-      } else if (type === "k") {
-        if (isWhite) whiteKing = [f, r]; else blackKing = [f, r];
+      } else if (code === 5) { // vezir
+        mobQ += sign * slideCount(grid, f, r, QUEEN_DIRS);
+      } else if (code === 6) { // sah
+        if (isWhite) whiteKingSq = sq; else blackKingSq = sq;
       }
     }
 
-    for (const p of MATERIAL_PIECES) feats.push(mob[p]);
+    feats.push(mobP, mobN, mobB, mobR, mobQ);
 
     // Doubled
     let wDoubled = 0, bDoubled = 0;
@@ -261,112 +276,113 @@
     feats.push(wDoubled - bDoubled);
 
     // Isolated
-    function isolated(files) {
-      let n = 0;
-      for (let f = 0; f < 8; f++) {
-        if (files[f] === 0) continue;
-        const left = f - 1 >= 0 ? files[f - 1] : 0;
-        const right = f + 1 <= 7 ? files[f + 1] : 0;
-        if (left === 0 && right === 0) n += files[f];
-      }
-      return n;
-    }
-    feats.push(isolated(wpFile) - isolated(bpFile));
+    feats.push(isolatedCount(wpFile) - isolatedCount(bpFile));
 
     // Passed
     let wPassed = 0;
-    for (const [f, r] of whitePawns) {
+    for (let i = 0; i < whitePawnSq.length; i++) {
+      const sq = whitePawnSq[i], f = sq & 7, r = sq >> 3;
       let blocked = false;
-      for (const ef of [f - 1, f, f + 1]) {
-        if (ef >= 0 && ef <= 7 && bpFile[ef] > 0) {
-          for (const [bf, br] of blackPawns) {
-            if (bf === ef && br > r) { blocked = true; break; }
-          }
+      for (let ef = f - 1; ef <= f + 1 && !blocked; ef++) {
+        if (ef < 0 || ef > 7 || bpFile[ef] === 0) continue;
+        for (let j = 0; j < blackPawnSq.length; j++) {
+          const bsq = blackPawnSq[j];
+          if ((bsq & 7) === ef && (bsq >> 3) > r) { blocked = true; break; }
         }
-        if (blocked) break;
       }
       if (!blocked) wPassed += 1;
     }
     let bPassed = 0;
-    for (const [f, r] of blackPawns) {
+    for (let i = 0; i < blackPawnSq.length; i++) {
+      const sq = blackPawnSq[i], f = sq & 7, r = sq >> 3;
       let blocked = false;
-      for (const ef of [f - 1, f, f + 1]) {
-        if (ef >= 0 && ef <= 7 && wpFile[ef] > 0) {
-          for (const [wf, wr] of whitePawns) {
-            if (wf === ef && wr < r) { blocked = true; break; }
-          }
+      for (let ef = f - 1; ef <= f + 1 && !blocked; ef++) {
+        if (ef < 0 || ef > 7 || wpFile[ef] === 0) continue;
+        for (let j = 0; j < whitePawnSq.length; j++) {
+          const wsq = whitePawnSq[j];
+          if ((wsq & 7) === ef && (wsq >> 3) < r) { blocked = true; break; }
         }
-        if (blocked) break;
       }
       if (!blocked) bPassed += 1;
     }
     feats.push(wPassed - bPassed);
 
     // King shield
-    function shield(king, pawnSet, forward) {
-      if (king === null) return 0;
-      const kf = king[0], kr = king[1];
-      let n = 0;
-      for (const df of [-1, 0, 1]) {
-        for (const dr of [1, 2]) {
-          const nf = kf + df, nr = kr + dr * forward;
-          if (onBoard(nf, nr) && pawnSet.has(nr * 8 + nf)) n += 1;
-        }
-      }
-      return n;
-    }
-    const whitePawnSet = new Set(whitePawns.map(([f, r]) => r * 8 + f));
-    const blackPawnSet = new Set(blackPawns.map(([f, r]) => r * 8 + f));
-    feats.push(shield(whiteKing, whitePawnSet, 1) - shield(blackKing, blackPawnSet, -1));
+    feats.push(shieldCount(grid, whiteKingSq, 1) - shieldCount(grid, blackKingSq, -1));
 
-    // King attackers
-    function zone(king) {
-      if (king === null) return [];
-      const kf = king[0], kr = king[1];
-      const z = [];
-      for (const df of [-1, 0, 1]) {
-        for (const dr of [-1, 0, 1]) {
-          if (onBoard(kf + df, kr + dr)) z.push((kr + dr) * 8 + (kf + df));
-        }
-      }
-      return z;
-    }
-    function countAttackers(z, attackerIsWhite) {
-      if (z.length === 0) return 0;
-      let n = 0;
-      for (let sq = 0; sq < 64; sq++) {
-        const cell = grid[sq];
-        if (cell === null) continue;
-        const type = cell.type, isWhite = cell.isWhite;
-        if (isWhite !== attackerIsWhite) continue;
-        const f = sq % 8, r = (sq - f) / 8;
-        let hits = false;
-        if (type === "p") {
-          const pr = isWhite ? r + 1 : r - 1;
-          for (const tsq of z) {
-            const tf = tsq % 8, tr = (tsq - tf) / 8;
-            if (tr === pr && (tf === f - 1 || tf === f + 1)) { hits = true; break; }
-          }
-        } else {
-          for (const tsq of z) {
-            if (attacksSquare(grid, f, r, tsq, type)) { hits = true; break; }
-          }
-        }
-        if (hits) n += 1;
-      }
-      return n;
-    }
-    const atkOnWhite = countAttackers(zone(whiteKing), false);
-    const atkOnBlack = countAttackers(zone(blackKing), true);
+    // King attackers (pozitif = beyaz lehine: siyah sahina daha cok saldiri)
+    const atkOnWhite = countAttackers(grid, whiteKingSq, false);
+    const atkOnBlack = countAttackers(grid, blackKingSq, true);
     feats.push(atkOnBlack - atkOnWhite);
 
     // Open-file rook
     let wOpen = 0, bOpen = 0;
-    for (const f of whiteRooksFile) if (wpFile[f] === 0) wOpen += 1;
-    for (const f of blackRooksFile) if (bpFile[f] === 0) bOpen += 1;
+    for (let i = 0; i < whiteRooksFile.length; i++) if (wpFile[whiteRooksFile[i]] === 0) wOpen += 1;
+    for (let i = 0; i < blackRooksFile.length; i++) if (bpFile[blackRooksFile[i]] === 0) bOpen += 1;
     feats.push(wOpen - bOpen);
 
     return feats;
+  }
+
+  // Izole piyon sayisi (komsu dosyalarda dost piyon yok).
+  function isolatedCount(files) {
+    let n = 0;
+    for (let f = 0; f < 8; f++) {
+      if (files[f] === 0) continue;
+      const left = f - 1 >= 0 ? files[f - 1] : 0;
+      const right = f + 1 <= 7 ? files[f + 1] : 0;
+      if (left === 0 && right === 0) n += files[f];
+    }
+    return n;
+  }
+
+  // Sahin onundeki 3 dosya x 2 sira dost piyon sayisi. forward: beyaz +1, siyah -1.
+  function shieldCount(grid, kingSq, forward) {
+    if (kingSq < 0) return 0;
+    const kf = kingSq & 7, kr = kingSq >> 3;
+    const friendlyPawn = forward > 0 ? 1 : -1; // beyaz piyon=+1, siyah piyon=-1
+    let n = 0;
+    for (let df = -1; df <= 1; df++) {
+      for (let dd = 1; dd <= 2; dd++) {
+        const nf = kf + df, nr = kr + dd * forward;
+        if (!onBoard(nf, nr)) continue;
+        if (grid[nr * 8 + nf] === friendlyPawn) n += 1;
+      }
+    }
+    return n;
+  }
+
+  // Sahin 3x3 bolgesine saldiran dusman tas sayisi.
+  function countAttackers(grid, kingSq, attackerIsWhite) {
+    if (kingSq < 0) return 0;
+    const kf = kingSq & 7, kr = kingSq >> 3;
+    let n = 0;
+    for (let sq = 0; sq < 64; sq++) {
+      const v = grid[sq];
+      if (v === 0 || (v > 0) !== attackerIsWhite) continue;
+      const code = v > 0 ? v : -v, f = sq & 7, r = sq >> 3;
+      let hits = false;
+      if (code === 1) { // piyon
+        const pr = attackerIsWhite ? r + 1 : r - 1;
+        for (let df = -1; df <= 1 && !hits; df++) {
+          for (let dr = -1; dr <= 1; dr++) {
+            const tf = kf + df, tr = kr + dr;
+            if (!onBoard(tf, tr)) continue;
+            if (tr === pr && (tf === f - 1 || tf === f + 1)) { hits = true; break; }
+          }
+        }
+      } else {
+        for (let df = -1; df <= 1 && !hits; df++) {
+          for (let dr = -1; dr <= 1; dr++) {
+            const tf = kf + df, tr = kr + dr;
+            if (!onBoard(tf, tr)) continue;
+            if (attacksTarget(grid, f, r, tf, tr, code)) { hits = true; break; }
+          }
+        }
+      }
+      if (hits) n += 1;
+    }
+    return n;
   }
 
 export { featuresFromFen, FEATURE_NAMES, PST };

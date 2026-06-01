@@ -1,13 +1,19 @@
 /*
- * Satranc botu arama motoru: minimax + alpha-beta budama.
+ * Satranc botu arama motoru: minimax + alpha-beta + quiescence +
+ * transposition table + iterative deepening.
  *
  * Yaprak pozisyonlar evaluate.js (ML modeli) ile skorlanir; skor "beyazin
- * kazanma olasiligi" (0..1) oldugu icin:
- *    - beyaz oynarken skoru MAKSIMIZE eder,
- *    - siyah oynarken skoru MINIMIZE eder.
+ * kazanma olasiligi" (0..1) -> [-1,1]'e tasinir. Beyaz maksimize, siyah minimize.
  *
- * Mat: kaybeden taraf icin 0/1 ucuna ek olarak, daha kisa matlari tercih
- * etmek icin derinlige gore kucuk bir ayar uygulanir.
+ * Iyilestirmeler:
+ *  - Eval cache: ML degerlendirmesi (sicak yol) FEN'e gore Map'te onbelleklenir.
+ *  - Quiescence: yaprakta sadece alis/terfi hamleleri derinlemesine aranir
+ *    (taktiksel "bedava tas" korlugunu cozer).
+ *  - Transposition table: ayni pozisyon (halfmove/fullmove atilmis FEN anahtari)
+ *    farkli yoldan gelince sonucu yeniden hesaplanmaz; en iyi hamle siralamaya
+ *    tohum yapilir.
+ *  - Iterative deepening: derinlik 1..maxDepth kademeli; zaman butcesi dolunca
+ *    son TAM biten derinligin hamlesi dondurulur.
  *
  * Disa baglilik enjekte edilir: bir evaluator (winProbWhite) ve Chess sinifi.
  */
@@ -15,119 +21,196 @@
 // Mat skorlari (olasilik araliginin disinda, kesin sonuc).
 export const MATE = 1000;
 
+// TT giris bayraklari.
+const EXACT = 0, LOWER = 1, UPPER = 2;
+
 export function makeEngine(evaluator, Chess, opts) {
     opts = opts || {};
-    const maxDepth = opts.depth || 3;
+    const defaultDepth = opts.depth || opts.maxDepth || 3;
+    const defaultTimeMs = opts.timeMs || 0; // 0 => zaman siniri yok (sabit derinlik)
+    const QUIESCE_CAP = opts.quiesceCap != null ? opts.quiesceCap : 4; // quiescence ply ust siniri
 
-    /*
-     * Terminal (oyun bitti) skoru: beyaz perspektifinden.
-     * ply: koke olan uzaklik (kisa matlari tercih icin).
-     */
+    // --- Eval cache: FEN -> beyaz kazanma olasiligi [-1,1] ---
+    const evalCache = new Map();
+    function leafScore(game) {
+      const key = game.fen();
+      let v = evalCache.get(key);
+      if (v === undefined) {
+        v = (evaluator.winProbWhite(key) - 0.5) * 2; // 0..1 -> -1..1
+        evalCache.set(key, v);
+      }
+      return v;
+    }
+
+    // --- Transposition table ---
+    // anahtar = FEN'in son iki alani (halfmove/fullmove) atilmis hali, ki
+    // transpozisyonlar gercekten cakissin.
+    const tt = new Map();
+    function ttKey(game) {
+      const fen = game.fen();
+      const sp = fen.split(" ");
+      return sp[0] + " " + sp[1] + " " + sp[2] + " " + sp[3]; // tahta+sira+rok+ep
+    }
+
     function terminalScore(game, ply) {
       if (game.isCheckmate()) {
-        // Sira kimdeyse o mat olmustur (kaybetmistir).
-        // game.turn() === 'w' -> beyaz mat -> siyah kazandi -> cok dusuk skor.
         const whiteLost = game.turn() === "w";
         return whiteLost ? -MATE + ply : MATE - ply;
       }
       return 0; // pat / beraberlik -> notr
     }
 
-    /*
-     * Yaprak degerlendirme: beyaz kazanma olasiligini [-1,1]'e tasiriz
-     * (0.5 -> 0 notr) ki terminal skorlariyla ayni eksende olsun.
-     */
-    function leafScore(game) {
-      const p = evaluator.winProbWhite(game.fen());
-      return (p - 0.5) * 2; // 0..1 -> -1..1
-    }
-
     // Ucuz hamle siralamasi icin taş degerleri (MVV-LVA).
     const PIECE_VAL = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 };
 
-    /*
-     * Hamle siralama: budamayi artirmak icin iyi hamleleri one al.
-     * ML cagirmadan, ucuz sezgisel kullanir:
-     *   - alma hamleleri once (en degerli kurban - en ucuz saldiran),
-     *   - terfi ve sahlar bonus.
-     * Boylece her dugumde N kez leafScore cagirmaktan kacinriz.
-     */
-    function orderedMoves(game) {
-      const moves = game.moves({ verbose: true });
-      moves.sort((a, b) => moveOrderScore(b) - moveOrderScore(a));
-      return moves;
-    }
-
     function moveOrderScore(m) {
       let s = 0;
-      if (m.captured) {
-        s += 10 * PIECE_VAL[m.captured] - PIECE_VAL[m.piece]; // MVV-LVA
-      }
+      if (m.captured) s += 10 * PIECE_VAL[m.captured] - PIECE_VAL[m.piece]; // MVV-LVA
       if (m.promotion) s += 8 * (PIECE_VAL[m.promotion] || 9);
       if (m.san && m.san.includes("+")) s += 1; // sah
       return s;
     }
 
-    function alphabeta(game, depth, alpha, beta, ply) {
-      if (game.isGameOver()) {
-        return terminalScore(game, ply);
+    /*
+     * Hamle siralama: TT'deki en iyi hamleyi en one al, sonra MVV-LVA.
+     */
+    function orderedMoves(game, ttBest) {
+      const moves = game.moves({ verbose: true });
+      moves.sort((a, b) => moveOrderScore(b) - moveOrderScore(a));
+      if (ttBest) {
+        const idx = moves.findIndex(
+          (m) => m.from === ttBest.from && m.to === ttBest.to && m.promotion === ttBest.promotion
+        );
+        if (idx > 0) {
+          const [best] = moves.splice(idx, 1);
+          moves.unshift(best);
+        }
       }
-      if (depth === 0) {
-        return leafScore(game);
-      }
+      return moves;
+    }
+
+    /*
+     * Quiescence: sadece alis ve terfi hamlelerini araclayarak "sessiz" bir
+     * pozisyona inilene kadar derinlesir. Stand-pat = mevcut leafScore.
+     */
+    function quiesce(game, alpha, beta, ply, deadline, ctr) {
+      checkTime(deadline, ctr);
+      if (game.isGameOver()) return terminalScore(game, ply);
 
       const white = game.turn() === "w";
-      const moves = orderedMoves(game);
+      const standPat = leafScore(game);
 
       if (white) {
-        let best = -Infinity;
-        for (const m of moves) {
+        if (standPat >= beta) return standPat;
+        if (standPat > alpha) alpha = standPat;
+      } else {
+        if (standPat <= alpha) return standPat;
+        if (standPat < beta) beta = standPat;
+      }
+      if (ply >= QUIESCE_CAP) return standPat;
+
+      // Sadece alis/terfi; ayrica acik sekilde kotu alislari (dusuk degerli
+      // tasla yuksek degerli savunulan tasi degil, tersine kayipli alislari)
+      // MVV-LVA skoru negatif olanlari ele -- quiescence patlamasini onler.
+      const caps = game
+        .moves({ verbose: true })
+        .filter((m) => (m.captured || m.promotion) && moveOrderScore(m) >= 0)
+        .sort((a, b) => moveOrderScore(b) - moveOrderScore(a));
+
+      if (white) {
+        let best = standPat;
+        for (const m of caps) {
           game.move(m);
-          const score = alphabeta(game, depth - 1, alpha, beta, ply + 1);
+          const s = quiesce(game, alpha, beta, ply + 1, deadline, ctr);
           game.undo();
-          if (score > best) best = score;
+          if (s > best) best = s;
           if (best > alpha) alpha = best;
-          if (alpha >= beta) break; // beta kesme
+          if (alpha >= beta) break;
         }
         return best;
       } else {
-        let best = Infinity;
-        for (const m of moves) {
+        let best = standPat;
+        for (const m of caps) {
           game.move(m);
-          const score = alphabeta(game, depth - 1, alpha, beta, ply + 1);
+          const s = quiesce(game, alpha, beta, ply + 1, deadline, ctr);
           game.undo();
-          if (score < best) best = score;
+          if (s < best) best = s;
           if (best < beta) beta = best;
-          if (alpha >= beta) break; // alpha kesme
+          if (alpha >= beta) break;
         }
         return best;
       }
     }
 
-    /*
-     * Verilen FEN'de en iyi hamleyi bulur.
-     * Donen: { move: <verbose move>, score, evaluated }
-     */
-    function bestMove(fen, depth) {
-      const d = depth || maxDepth;
-      const game = new Chess(fen);
-      if (game.isGameOver()) return { move: null, score: 0, evaluated: 0 };
+    function alphabeta(game, depth, alpha, beta, ply, deadline, ctr) {
+      checkTime(deadline, ctr);
+      if (game.isGameOver()) return terminalScore(game, ply);
+      if (depth === 0) return quiesce(game, alpha, beta, ply, deadline, ctr);
+
+      const alphaOrig = alpha, betaOrig = beta;
+      const key = ttKey(game);
+      const entry = tt.get(key);
+      let ttBest = null;
+      if (entry) {
+        ttBest = entry.bestMove;
+        if (entry.depth >= depth) {
+          if (entry.flag === EXACT) return entry.score;
+          if (entry.flag === LOWER && entry.score > alpha) alpha = entry.score;
+          else if (entry.flag === UPPER && entry.score < beta) beta = entry.score;
+          if (alpha >= beta) return entry.score;
+        }
+      }
 
       const white = game.turn() === "w";
-      const moves = orderedMoves(game);
+      const moves = orderedMoves(game, ttBest);
+      let best = white ? -Infinity : Infinity;
+      let bestMove = null;
+
+      for (const m of moves) {
+        game.move(m);
+        const score = alphabeta(game, depth - 1, alpha, beta, ply + 1, deadline, ctr);
+        game.undo();
+        if (white) {
+          if (score > best) { best = score; bestMove = m; }
+          if (best > alpha) alpha = best;
+        } else {
+          if (score < best) { best = score; bestMove = m; }
+          if (best < beta) beta = best;
+        }
+        if (alpha >= beta) break; // kesme
+      }
+
+      // TT'ye yaz.
+      let flag;
+      if (best <= alphaOrig) flag = UPPER;
+      else if (best >= betaOrig) flag = LOWER;
+      else flag = EXACT;
+      tt.set(key, {
+        depth, score: best, flag,
+        bestMove: bestMove ? { from: bestMove.from, to: bestMove.to, promotion: bestMove.promotion } : null,
+      });
+
+      return best;
+    }
+
+    /*
+     * Tek bir derinlik icin kok aramasi. ttBest ile siralama tohumlanir.
+     */
+    function searchRoot(game, depth, deadline, ctr) {
+      const white = game.turn() === "w";
+      const rootEntry = tt.get(ttKey(game));
+      const moves = orderedMoves(game, rootEntry ? rootEntry.bestMove : null);
 
       let bestMove = moves[0];
       let bestScore = white ? -Infinity : Infinity;
-      let alpha = -Infinity;
-      let beta = Infinity;
+      let alpha = -Infinity, beta = Infinity;
       let evaluated = 0;
 
       for (const m of moves) {
         game.move(m);
-        const score = alphabeta(game, d - 1, alpha, beta, 1);
+        const score = alphabeta(game, depth - 1, alpha, beta, 1, deadline, ctr);
         game.undo();
         evaluated++;
-
         if (white) {
           if (score > bestScore) { bestScore = score; bestMove = m; }
           if (bestScore > alpha) alpha = bestScore;
@@ -136,9 +219,64 @@ export function makeEngine(evaluator, Chess, opts) {
           if (bestScore < beta) beta = bestScore;
         }
       }
-
       return { move: bestMove, score: bestScore, evaluated };
     }
 
-    return { bestMove, leafScore, _maxDepth: maxDepth };
+    /*
+     * En iyi hamle. Iki cagri bicimi:
+     *   bestMove(fen)                       -> varsayilan derinlik/zaman
+     *   bestMove(fen, depth)                -> sabit derinlik (geriye uyumlu)
+     *   bestMove(fen, { maxDepth, timeMs }) -> iterative deepening + zaman butcesi
+     * Doner: { move, score, evaluated, depthReached }
+     */
+    function bestMove(fen, arg) {
+      let maxDepth = defaultDepth;
+      let timeMs = defaultTimeMs;
+      if (typeof arg === "number") {
+        maxDepth = arg; timeMs = 0; // eski cagri: sabit derinlik, zaman siniri yok
+      } else if (arg && typeof arg === "object") {
+        if (arg.maxDepth) maxDepth = arg.maxDepth;
+        if (arg.depth) maxDepth = arg.depth;
+        if (arg.timeMs != null) timeMs = arg.timeMs;
+      }
+
+      const game = new Chess(fen);
+      if (game.isGameOver()) return { move: null, score: 0, evaluated: 0, depthReached: 0 };
+
+      const deadline = timeMs > 0 ? Date.now() + timeMs : Infinity;
+      const ctr = { n: 0 };
+
+      let result = null;
+      let depthReached = 0;
+      for (let d = 1; d <= maxDepth; d++) {
+        try {
+          const r = searchRoot(game, d, deadline, ctr);
+          result = r;
+          depthReached = d;
+        } catch (err) {
+          if (err === TIME_UP) break; // zaman doldu: son tam derinligi koru
+          throw err;
+        }
+      }
+
+      // Hic derinlik tamamlanamadiysa (cok kisa butce) en azindan derinlik 1.
+      if (!result) {
+        result = searchRoot(game, 1, Infinity, { n: 0 });
+        depthReached = 1;
+      }
+
+      return {
+        move: result.move, score: result.score,
+        evaluated: result.evaluated, depthReached,
+      };
+    }
+
+    return { bestMove, leafScore, _maxDepth: defaultDepth };
+}
+
+// Zaman asimi sinyali (exception olarak firlatilir, kokte yakalanir).
+const TIME_UP = Symbol("TIME_UP");
+function checkTime(deadline, ctr) {
+  if (deadline === Infinity) return;
+  if ((++ctr.n & 255) === 0 && Date.now() > deadline) throw TIME_UP;
 }

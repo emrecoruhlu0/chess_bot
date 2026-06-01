@@ -96,7 +96,18 @@ async function setupWorker() {
   worker = new Worker("./bot.worker.js", { type: "module" });
   worker.onmessage = onWorkerMessage;
   const model = await fetch("./model.json").then((r) => r.json());
-  worker.postMessage({ type: "init", model, depth: Number(els.depth.value) });
+  const lv = difficulty();
+  worker.postMessage({ type: "init", model, maxDepth: lv.maxDepth, timeMs: lv.timeMs });
+}
+
+/* Zorluk seviyesi -> arama butcesi (iterative deepening tavani + zaman). */
+function difficulty() {
+  switch (els.depth.value) {
+    case "easy": return { maxDepth: 3, timeMs: 300 };
+    case "hard": return { maxDepth: 8, timeMs: 2500 };
+    case "medium":
+    default: return { maxDepth: 6, timeMs: 1000 };
+  }
 }
 
 function onWorkerMessage(e) {
@@ -114,7 +125,7 @@ function onWorkerMessage(e) {
       const wasLive = isLive(); // bot cevabi gelmeden kullanici sona mi bakiyordu?
       const result = game.move(msg.move);
       fenHistory.push(game.fen());
-      updateEvalFromScore(msg.score, msg.evaluated, msg.ms);
+      updateEvalFromScore(msg.score, msg.evaluated, msg.ms, msg.depthReached);
       if (wasLive) {
         // Kullanici canliydi: hamleyi animasyonla goster, sona kil.
         viewPly = fenHistory.length - 1;
@@ -135,7 +146,8 @@ function botMove() {
   busy = true;
   els.thinking.classList.remove("hidden");
   setStatus("Bot dusunuyor...");
-  const send = () => worker.postMessage({ type: "move", fen: game.fen(), depth: Number(els.depth.value) });
+  const lv = difficulty();
+  const send = () => worker.postMessage({ type: "move", fen: game.fen(), maxDepth: lv.maxDepth, timeMs: lv.timeMs });
   if (workerReady) send();
   else setTimeout(() => (workerReady ? send() : botMove()), 50);
 }
@@ -537,7 +549,7 @@ function updateStatus() {
   setStatus(s);
 }
 
-function updateEvalFromScore(score, evaluated, ms) {
+function updateEvalFromScore(score, evaluated, ms, depthReached) {
   let pct, text;
   if (Math.abs(score) >= 900) {
     const whiteWinning = score > 0;
@@ -548,7 +560,8 @@ function updateEvalFromScore(score, evaluated, ms) {
     pct = Math.round(prob * 100);
     text = `Beyaz kazanma: %${pct}`;
   }
-  els.eval.textContent = `${text}  ·  ${evaluated} hamle, ${ms}ms`;
+  const depthStr = depthReached ? `derinlik ${depthReached}, ` : "";
+  els.eval.textContent = `${text}  ·  ${depthStr}${ms}ms`;
   els.evalBar.style.height = pct + "%";
   els.evalLabel.textContent = pct + "%";
 }

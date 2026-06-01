@@ -1,7 +1,8 @@
 /*
  * Bot Web Worker'i (ES module worker).
- * Ana thread'den { type:"init", model } ve { type:"move", fen, depth } mesajlari alir,
- * en iyi hamleyi { type:"bestmove", move, score, ms } olarak doner.
+ * Ana thread'den { type:"init", model, maxDepth, timeMs } ve
+ * { type:"move", fen, depth?, maxDepth?, timeMs? } mesajlari alir,
+ * en iyi hamleyi { type:"bestmove", move, score, depthReached, ms } olarak doner.
  * Arama ana thread yerine burada calistigi icin UI donmaz.
  */
 import { Chess } from "./node_modules/chess.js/dist/esm/chess.js";
@@ -14,7 +15,10 @@ self.onmessage = (e) => {
   const msg = e.data;
   if (msg.type === "init") {
     const evaluator = makeEvaluator(msg.model);
-    engine = makeEngine(evaluator, Chess, { depth: msg.depth || 3 });
+    engine = makeEngine(evaluator, Chess, {
+      maxDepth: msg.maxDepth || msg.depth || 4,
+      timeMs: msg.timeMs != null ? msg.timeMs : 1000,
+    });
     self.postMessage({ type: "ready" });
     return;
   }
@@ -24,15 +28,23 @@ self.onmessage = (e) => {
       return;
     }
     const t0 = Date.now();
-    const r = engine.bestMove(msg.fen, msg.depth);
+    // Iterative deepening + zaman butcesi. Geriye uyumluluk: sadece depth
+    // gelirse onu maxDepth gibi kullan (zaman siniri yok).
+    let arg;
+    if (msg.timeMs != null || msg.maxDepth != null) {
+      arg = { maxDepth: msg.maxDepth || msg.depth, timeMs: msg.timeMs };
+    } else if (msg.depth != null) {
+      arg = msg.depth; // eski cagri: sabit derinlik
+    }
+    const r = engine.bestMove(msg.fen, arg);
     const ms = Date.now() - t0;
     self.postMessage({
       type: "bestmove",
-      // verbose move'u UI'in chess.js'ine geri uygulayabilmek icin sade alanlar:
       move: r.move ? { from: r.move.from, to: r.move.to, promotion: r.move.promotion } : null,
       san: r.move ? r.move.san : null,
       score: r.score,
       evaluated: r.evaluated,
+      depthReached: r.depthReached,
       ms,
     });
   }

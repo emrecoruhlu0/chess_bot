@@ -19,9 +19,11 @@ const cases = [
 ];
 
 let failed = 0;
+
+// 1) Sabit derinlik (geriye uyumlu cagri).
 for (const d of [2, 3]) {
   const engine = makeEngine(evaluator, Chess, { depth: d });
-  console.log(`\n=== derinlik ${d} ===`);
+  console.log(`\n=== sabit derinlik ${d} ===`);
   for (const c of cases) {
     const t0 = Date.now();
     const r = engine.bestMove(c.fen, d);
@@ -31,6 +33,22 @@ for (const d of [2, 3]) {
     if (!ok) failed++;
     console.log(`  ${ok ? "OK " : "HATA"} ${c.name}: ${san} (skor=${r.score.toFixed(3)}, ${ms}ms)` +
       (c.expect ? `  beklenen=${c.expect}` : ""));
+  }
+}
+
+// 2) Iterative deepening + zaman butcesi (yeni mod).
+{
+  const engine = makeEngine(evaluator, Chess, { maxDepth: 6, timeMs: 1000 });
+  console.log(`\n=== iterative deepening (maxDepth=6, timeMs=1000) ===`);
+  for (const c of cases) {
+    const t0 = Date.now();
+    const r = engine.bestMove(c.fen, { maxDepth: 6, timeMs: 1000 });
+    const ms = Date.now() - t0;
+    const san = r.move ? r.move.san : "YOK";
+    const ok = c.expect == null ? true : san === c.expect;
+    if (!ok) failed++;
+    console.log(`  ${ok ? "OK " : "HATA"} ${c.name}: ${san} (skor=${r.score.toFixed(3)}, ` +
+      `derinlik=${r.depthReached}, ${ms}ms)` + (c.expect ? `  beklenen=${c.expect}` : ""));
   }
 }
 
