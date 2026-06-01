@@ -93,11 +93,17 @@ def main():
 
     # --- MLP (tek gizli katman, ReLU) ---
     X_tr_mlp, y_tr_mlp = oversample_for_mlp(X_tr_s, y_tr_e, w_tr_e)
+    # NOT: early_stopping cok erken durabiliyordu (~22 iterasyon, validation hala
+    # yukselirken). n_iter_no_change buyutuldu (sabir), iterasyon ve kapasite
+    # artirildi ki MLP gercekten yakinsasin (underfitting'i onle).
     mlp = MLPClassifier(
-        hidden_layer_sizes=(24,), activation="relu",
-        max_iter=400, early_stopping=True, random_state=42,
+        hidden_layer_sizes=(32, 16), activation="relu",
+        max_iter=2000, early_stopping=True, n_iter_no_change=40,
+        validation_fraction=0.1, random_state=42,
     )
     mlp.fit(X_tr_mlp, y_tr_mlp)
+    print(f"  (MLP {mlp.n_iter_} iterasyonda durdu, "
+          f"katman={mlp.hidden_layer_sizes})")
     mlp_proba = mlp.predict_proba(X_te_s)[:, 1]
 
     print(f"\nTest (beraberlikler haric):")
