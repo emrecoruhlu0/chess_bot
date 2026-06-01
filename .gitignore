@@ -11,6 +11,7 @@ training/dataset.npz
 training/model_sklearn.joblib
 training/parity_cases.json
 training/eval_cases.json
+web/ab_result.txt
 
 # Editor / OS
 .vscode/

@@ -62,7 +62,9 @@ function playGame(white, black, rng) {
     const side = game.turn() === "w" ? white : black;
     const m = side.pickMove(game.fen());
     if (!m) break;
-    game.move(m);
+    // Motor ayri bir Chess ornegi kullanir; verbose move'u sade alanlarla uygula
+    // (before/after gibi alanlar farkli ornekten gelince chess.js reddedebilir).
+    game.move({ from: m.from, to: m.to, promotion: m.promotion });
     ply++;
   }
   if (game.isCheckmate()) return game.turn() === "w" ? "black" : "white";
