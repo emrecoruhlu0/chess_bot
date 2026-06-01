@@ -1,0 +1,456 @@
+/* ============================================================
+   Satranç Botu — arayüz stilleri
+   Tema: chess.com tarzı (koyu/açık). Boyut: --sq-size tek kaynak.
+   Tahta: 3 katman (squares / hints / pieces). Taşlar mutlak konumlu,
+   transform ile kayar (animasyon).
+   ============================================================ */
+
+:root {
+  /* Boyut sistemi — tek ölçek kaynağı. Animasyon ve koordinatlar buna bağlı. */
+  --sq-size: clamp(38px, 10.5vw, 64px);
+  --board-size: calc(var(--sq-size) * 8);
+  --eval-w: 16px;        /* eval bar genisligi */
+  --board-gap: 10px;     /* eval bar ile tahta arasi bosluk */
+  --radius: 12px;
+  --radius-sm: 8px;
+  --anim: 0.22s;
+}
+
+/* Palet — koyu (chess.com canlı) */
+[data-theme="dark"] {
+  --bg: #262421;
+  --bg-grad: radial-gradient(1200px 600px at 50% -10%, #34302b 0%, #262421 60%);
+  --panel: #312e2b;
+  --card: #3a3633;
+  --board-light: #ebecd0;
+  --board-dark: #769656;
+  --sel: #f6f669;
+  --last: rgba(245, 245, 130, 0.55);
+  --accent: #81b64c;
+  --accent-hover: #95cc5b;
+  --accent-text: #ffffff;
+  --text: #ececec;
+  --muted: #a8a39d;
+  --border: rgba(255, 255, 255, 0.07);
+  --card-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --eval-white: #f0f0f0;
+  --eval-bg: #1c1b19;
+  --input-bg: #262421;
+}
+
+/* Palet — açık */
+[data-theme="light"] {
+  --bg: #f0f1f3;
+  --bg-grad: radial-gradient(1200px 600px at 50% -10%, #ffffff 0%, #e7e9ec 60%);
+  --panel: #ffffff;
+  --card: #ffffff;
+  --board-light: #ebecd0;
+  --board-dark: #769656;
+  --sel: #f6f669;
+  --last: rgba(245, 211, 91, 0.6);
+  --accent: #81b64c;
+  --accent-hover: #6fa23f;
+  --accent-text: #ffffff;
+  --text: #2b2b2b;
+  --muted: #6b7280;
+  --border: rgba(0, 0, 0, 0.08);
+  --card-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  --eval-white: #ffffff;
+  --eval-bg: #b8b8b8;
+  --input-bg: #f3f4f6;
+}
+
+* { box-sizing: border-box; }
+
+html {
+  transition: background-color 0.25s ease, color 0.25s ease;
+  /* Animasyon/scrollIntoView kaynakli istem disi sayfa kaymasini engelle */
+  overflow-anchor: none;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg-grad), var(--bg);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden; /* yatay tasmayi kes -> mobilde yan kayma olmaz */
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+}
+
+/* ---------------- Header ---------------- */
+header { padding: 16px; }
+.header-inner {
+  max-width: 1000px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.title-block { text-align: left; }
+header h1 { margin: 0; font-size: 1.7rem; display: flex; align-items: center; gap: 8px; }
+header h1 .logo { color: var(--accent); }
+.subtitle { margin: 4px 0 0; color: var(--muted); font-size: 0.85rem; }
+.header-actions { display: flex; gap: 8px; }
+.icon-btn {
+  width: 42px; height: 42px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--card);
+  color: var(--text);
+  font-size: 1.1rem;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: transform 0.12s ease, filter 0.12s ease, background 0.12s ease;
+}
+.icon-btn:hover { transform: translateY(-1px); filter: brightness(1.08); }
+.icon-btn:active { transform: translateY(0); }
+.icon-btn.muted { opacity: 0.5; }
+
+/* ---------------- Main layout ---------------- */
+main {
+  display: flex;
+  gap: 28px;
+  justify-content: center;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  padding: 0 16px 28px;
+  flex: 1;
+}
+
+.board-area { display: flex; flex-direction: column; gap: 8px; align-items: center; }
+.board-row { display: flex; gap: var(--board-gap); align-items: stretch; }
+
+/* ---------------- Eval bar ---------------- */
+#eval-bar {
+  position: relative;
+  width: var(--eval-w);
+  height: var(--board-size);
+  background: var(--eval-bg);
+  border-radius: 8px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column-reverse;
+}
+#eval-bar-fill {
+  width: 100%;
+  height: 50%;
+  background: var(--eval-white);
+  transition: height var(--anim) ease;
+}
+.eval-bar-label {
+  position: absolute;
+  left: 50%;
+  bottom: 4px;
+  transform: translateX(-50%) rotate(-90deg);
+  transform-origin: center;
+  font-size: 0.55rem;
+  font-weight: 700;
+  color: #555;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+/* ---------------- Board (3 katman) ---------------- */
+#board {
+  position: relative;
+  width: var(--board-size);
+  height: var(--board-size);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  box-shadow: var(--card-shadow);
+  user-select: none;
+  touch-action: manipulation;
+}
+
+.squares-layer,
+.hints-layer,
+.pieces-layer,
+.coords-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.squares-layer { z-index: 0; display: grid; grid-template-columns: repeat(8, 1fr); grid-template-rows: repeat(8, 1fr); }
+.hints-layer { z-index: 1; pointer-events: none; }
+.pieces-layer { z-index: 2; pointer-events: none; }
+.coords-layer { z-index: 3; pointer-events: none; }
+
+.square {
+  width: 100%; height: 100%;
+  cursor: pointer;
+}
+.square.light { background: var(--board-light); }
+.square.dark { background: var(--board-dark); }
+
+/* Vurgular (hints-layer içinde mutlak konumlu) */
+.overlay {
+  position: absolute;
+  width: var(--sq-size);
+  height: var(--sq-size);
+}
+.overlay.selected { background: var(--sel); opacity: 0.75; }
+.overlay.lastmove { background: var(--last); }
+.overlay.check {
+  background: radial-gradient(circle, rgba(255,0,0,0.65) 0%, rgba(255,0,0,0.25) 55%, transparent 72%);
+}
+.overlay.move-hint::after {
+  content: "";
+  position: absolute; inset: 0; margin: auto;
+  width: 30%; height: 30%;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.22);
+}
+.overlay.capture-hint::after {
+  content: "";
+  position: absolute; inset: 7%;
+  border: calc(var(--sq-size) * 0.08) solid rgba(0, 0, 0, 0.22);
+  border-radius: 50%;
+}
+
+/* Taşlar */
+.piece {
+  position: absolute;
+  top: 0; left: 0;
+  width: var(--sq-size);
+  height: var(--sq-size);
+  will-change: transform;
+}
+.pieces-layer:not(.no-anim) .piece {
+  transition: transform var(--anim) cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+.piece img {
+  width: 100%; height: 100%;
+  pointer-events: none;
+  display: block;
+}
+.piece.captured {
+  transition: opacity var(--anim) ease, transform var(--anim) ease;
+  opacity: 0;
+  /* translate once (kareye sabitle), sonra scale -> tas yerinde kuculerek kaybolur */
+  transform: translate(var(--tx), var(--ty)) scale(0.55);
+}
+.piece.dragging-z { z-index: 5; }
+
+/* Koordinat etiketleri */
+.coord {
+  position: absolute;
+  font-size: calc(var(--sq-size) * 0.2);
+  font-weight: 700;
+  line-height: 1;
+}
+.coord.file { bottom: 2px; right: 3px; }
+.coord.rank { top: 2px; left: 3px; }
+.coord.on-light { color: var(--board-dark); }
+.coord.on-dark { color: var(--board-light); }
+
+/* ---------------- Captured strips ---------------- */
+/* Tahta, board-row icinde eval-bar + gap kadar sagda. Seritleri ayni kadar
+   kaydirarak tahtanin sol kenariyla hizala. */
+.captured-strip {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  min-height: 24px;
+  width: var(--board-size);
+  margin-left: calc(var(--eval-w) + var(--board-gap));
+  padding-left: 2px;
+}
+.captured-strip img {
+  width: 20px; height: 20px;
+  margin-left: -5px;
+}
+.captured-strip img:first-child { margin-left: 0; }
+.captured-adv {
+  margin-left: 6px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+/* ---------------- Panel & cards ---------------- */
+.panel {
+  width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  box-shadow: var(--card-shadow);
+}
+.card-title {
+  font-size: 0.72rem;
+  color: var(--muted);
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  font-weight: 700;
+}
+
+.controls { display: flex; flex-direction: column; gap: 12px; }
+.field { display: flex; flex-direction: column; gap: 5px; }
+.field-label { font-size: 0.8rem; color: var(--muted); font-weight: 600; }
+select {
+  padding: 9px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--input-bg);
+  color: var(--text);
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+.btn {
+  flex: 1;
+  min-width: 90px;
+  padding: 10px 12px;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.12s ease, filter 0.12s ease, background 0.12s ease;
+}
+.btn:hover { transform: translateY(-1px); filter: brightness(1.06); }
+.btn:active { transform: translateY(0); }
+.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.btn-primary { background: var(--accent); color: var(--accent-text); }
+.btn-secondary { background: var(--input-bg); color: var(--text); border: 1px solid var(--border); }
+
+.status {
+  font-weight: 600;
+  text-align: center;
+  padding: 12px;
+}
+.status.watching { color: #e0a23c; }
+
+.thinking {
+  text-align: center;
+  color: var(--accent-hover);
+  font-weight: 600;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+}
+.thinking.hidden { display: none; }
+.dots { display: inline-flex; gap: 4px; }
+.dots i {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent-hover);
+  animation: pulse 1s infinite ease-in-out;
+}
+.dots i:nth-child(2) { animation-delay: 0.15s; }
+.dots i:nth-child(3) { animation-delay: 0.3s; }
+@keyframes pulse {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.5; }
+  40% { transform: scale(1); opacity: 1; }
+}
+
+#eval { font-size: 0.92rem; }
+
+.history {
+  font-family: "Consolas", monospace;
+  font-size: 0.88rem;
+  max-height: 200px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  line-height: 1.7;
+  padding-right: 4px;
+  /* Ince, temali kaydirma cubugu */
+  scrollbar-width: thin;
+  scrollbar-color: var(--accent) transparent;
+  overscroll-behavior: contain; /* kutu sonuna gelince sayfayi kaydirma */
+  -webkit-overflow-scrolling: touch;
+}
+.history::-webkit-scrollbar { width: 8px; }
+.history::-webkit-scrollbar-track { background: transparent; }
+.history::-webkit-scrollbar-thumb {
+  background: var(--accent);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+.history::-webkit-scrollbar-thumb:hover { background: var(--accent-hover); background-clip: content-box; }
+.hist-move {
+  cursor: pointer;
+  padding: 1px 3px;
+  border-radius: 4px;
+}
+.hist-move:hover { background: var(--border); }
+.hist-move.active { background: var(--accent); color: var(--accent-text); }
+.hist-num { color: var(--muted); }
+
+.nav-bar {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+  justify-content: center;
+}
+.nav-btn {
+  flex: 1;
+  padding: 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--input-bg);
+  color: var(--text);
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: filter 0.12s ease, background 0.12s ease;
+}
+.nav-btn:hover:not(:disabled) { filter: brightness(1.1); }
+.nav-btn:disabled { opacity: 0.35; cursor: default; }
+
+/* ---------------- Footer ---------------- */
+footer {
+  text-align: center;
+  padding: 14px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  border-top: 1px solid var(--border);
+}
+footer a { color: var(--accent); }
+
+/* ---------------- Responsive ---------------- */
+
+/* Orta ekran: panel tahtanin altina iner, ikisi de ortalanir. */
+@media (max-width: 860px) {
+  main {
+    flex-direction: column;
+    align-items: center;
+    gap: 18px;
+  }
+  .panel { width: min(var(--board-size), 92vw); min-width: 0; }
+  .header-inner { flex-direction: column; text-align: center; gap: 10px; }
+  .title-block { text-align: center; }
+}
+
+/*
+ * Telefon: kare boyutunu viewport'tan turet. Tahtaya ek olarak eval bar (16px),
+ * gap (8px) ve sayfa padding'i (2x10px) yer kaplar; bu yuzden kullanilabilir
+ * genislik = 100vw - ~44px, /8 = bir kare. Boylece tahta hicbir zaman tasmaz.
+ */
+@media (max-width: 560px) {
+  :root {
+    --eval-w: 12px;
+    --board-gap: 6px;
+    --sq-size: min(58px, calc((100vw - 42px) / 8));
+  }
+  main { padding: 0 8px 20px; }
+  header { padding: 12px 8px; }
+  header h1 { font-size: 1.45rem; }
+  .subtitle { font-size: 0.78rem; }
+  .card { padding: 12px; }
+  .btn { min-width: 70px; padding: 11px 8px; font-size: 0.82rem; }
+  .nav-btn { padding: 10px; font-size: 1.05rem; } /* dokunmatik icin biraz daha buyuk */
+  .icon-btn { width: 44px; height: 44px; }
+}

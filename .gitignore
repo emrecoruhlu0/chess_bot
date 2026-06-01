@@ -1,0 +1,23 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Node
+web/node_modules/
+
+# Ara/uretilen dosyalar (gerekirse yeniden uretilir)
+training/dataset.npz
+training/model_sklearn.joblib
+training/parity_cases.json
+
+# Editor / OS
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Yedek arsiv (repoda gerekmez)
+archive.zip
+
+# Claude yerel ayarlari
+.claude/settings.local.json

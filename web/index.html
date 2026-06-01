@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="tr" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Satranç Botu — ML Değerlendirme + Minimax</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <div class="title-block">
+        <h1><span class="logo">♞</span> Satranç Botu</h1>
+        <p class="subtitle">20.000 oyundan öğrenilmiş değerlendirme · Minimax + Alpha-Beta arama</p>
+      </div>
+      <div class="header-actions">
+        <button id="sound-toggle" class="icon-btn" title="Sesi aç/kapat" aria-label="Ses">🔊</button>
+        <button id="theme-toggle" class="icon-btn" title="Açık/koyu tema" aria-label="Tema">🌙</button>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="board-area">
+      <!-- Yakalanan taşlar: tahtanın üstünde (insan rakibinin kaybettikleri) -->
+      <div id="captured-top" class="captured-strip" aria-label="Yakalanan taşlar (üst)"></div>
+
+      <div class="board-row">
+        <div id="eval-bar" title="Değerlendirme: yukarı beyaz, aşağı siyah">
+          <div id="eval-bar-fill"></div>
+          <span id="eval-bar-label" class="eval-bar-label">50%</span>
+        </div>
+        <div id="board"></div>
+      </div>
+
+      <!-- Yakalanan taşlar: tahtanın altında -->
+      <div id="captured-bottom" class="captured-strip" aria-label="Yakalanan taşlar (alt)"></div>
+    </section>
+
+    <aside class="panel">
+      <div class="card controls">
+        <label class="field">
+          <span class="field-label">Rengin</span>
+          <select id="side-select">
+            <option value="w">Beyaz</option>
+            <option value="b">Siyah</option>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field-label">Zorluk (arama derinliği)</span>
+          <select id="depth-select">
+            <option value="2">Kolay (2)</option>
+            <option value="3" selected>Orta (3)</option>
+            <option value="4">Zor (4 — yavaş)</option>
+          </select>
+        </label>
+        <div class="buttons">
+          <button id="new-game" class="btn btn-primary">Yeni Oyun</button>
+          <button id="undo" class="btn btn-secondary">Geri Al</button>
+          <button id="flip" class="btn btn-secondary">Tahtayı Çevir</button>
+        </div>
+      </div>
+
+      <div id="status" class="card status">Yükleniyor…</div>
+      <div id="thinking" class="thinking hidden">
+        <span class="dots"><i></i><i></i><i></i></span> Bot düşünüyor
+      </div>
+
+      <div class="card eval-box">
+        <div class="card-title">Bot değerlendirmesi</div>
+        <div id="eval">—</div>
+      </div>
+
+      <div class="card history-box">
+        <div class="card-title">Hamleler</div>
+        <div id="history" class="history"></div>
+        <div class="nav-bar">
+          <button id="nav-start" class="nav-btn" title="Başa (Home)" aria-label="Başa">⏮</button>
+          <button id="nav-back" class="nav-btn" title="Geri (←)" aria-label="Geri">◀</button>
+          <button id="nav-fwd" class="nav-btn" title="İleri (→)" aria-label="İleri">▶</button>
+          <button id="nav-end" class="nav-btn" title="Sona (End)" aria-label="Sona">⏭</button>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <footer>
+    <p>Model: lojistik regresyon (materyal + piece-square + sıra) · sigmoid(w·x+b) = beyazın kazanma olasılığı. · Taşlar: <a href="https://github.com/lichess-org/lila" target="_blank" rel="noopener">cburnett</a> (açık lisans).</p>
+  </footer>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
