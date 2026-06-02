@@ -110,9 +110,17 @@ def main():
     _, lr_ll = report("LR", lr_proba, y_te_c)
     _, mlp_ll = report("MLP", mlp_proba, y_te_c)
 
-    # Kazanan = dusuk log-loss.
-    winner = "lr" if lr_ll <= mlp_ll else "mlp"
-    print(f"\nKAZANAN: {winner.upper()}  (dusuk log-loss tercih edilir)")
+    # ONEMLI BULGU: MLP test log-loss'unda hafifce daha iyi cikiyor, AMA
+    # ab_match.js ile yapilan oyun-ici A/B testinde MLP, LR'ye agir kaybetti
+    # (20 oyunda 0 galibiyet). Sebep: minimax arama, MLP'nin pürüzlü/dogrusal
+    # olmayan deger yuzeyindeki "sahte" yuksek skorlari somuruyor; LR'nin duzgun
+    # yuzeyi arama icin daha guvenli/tutarli. Ayrica MLP forward-pass daha yavas
+    # -> ayni zaman butcesinde daha az derinlik. Bu yuzden VARSAYILAN: LR.
+    # (MLP altyapisi korunur; daha kaliteli etiketle -ör. Stockfish- tekrar denenebilir.)
+    winner = "lr"
+    print(f"\nVARSAYILAN: {winner.upper()}  (test log-loss LR={lr_ll:.4f} MLP={mlp_ll:.4f}; "
+          f"oyun-ici A/B'de LR ustun)")
+    print("  MLP'yi yine de export etmek icin: python export_model.py --model mlp")
 
     print("\nLR ogrenilen katsayilar (OLCEKLI ozellik uzerinde):")
     for name, w in zip(FEATURE_NAMES, lr.coef_[0]):

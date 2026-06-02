@@ -26,9 +26,16 @@ web/  (JavaScript — tarayıcı)
 ```
 
 ### Model
-İki model eğitilir, test log-loss'una göre kazanan seçilir (şu an: **MLP**):
+İki model eğitilir ve karşılaştırılır; **varsayılan: lojistik regresyon (LR)**:
 - **Lojistik regresyon** — tek doğrusal katman, açıklanabilir ağırlıklar
-- **Küçük MLP** — tek gizli katman (24 nöron, ReLU), doğrusal olmayan ilişkiler
+- **Küçük MLP** — gizli katmanlar (32,16; ReLU), doğrusal olmayan ilişkiler
+
+> **Önemli bulgu:** MLP test log-loss'unda hafifçe daha iyi olmasına rağmen,
+> oyun-içi A/B testinde LR'ye **ağır kaybetti** (20 oyunda 0 galibiyet). Minimax
+> arama, MLP'nin pürüzlü değer yüzeyindeki "sahte" yüksek skorları sömürüyor;
+> LR'nin düzgün doğrusal yüzeyi arama için daha güvenli. "Test doğruluğu ≠ oyun
+> gücü" — bu yüzden varsayılan LR. (MLP altyapısı korundu; `--model mlp` ile
+> denenebilir, ya da Stockfish gibi daha kaliteli etiketle yeniden eğitilebilir.)
 
 Özellikler `StandardScaler` ile ölçeklenir; ölçekleyici model.json'a yazılır ve
 JS tarafında birebir aynı uygulanır.
@@ -54,6 +61,17 @@ Minimax + alpha-beta budama. Beyaz skoru maksimize, siyah minimize eder.
 - **Eval cache** + **MVV-LVA** hamle sıralaması ile hızlandırılır
 
 Zorluk seviyeleri zaman bütçesine bağlıdır: kolay 300ms, orta 1000ms, zor 2500ms.
+
+### A/B sonuçları (eski bot vs yeni bot)
+`ab_match.js` ile ölçülen güç artışı (20 oyun, renk değişimli):
+- **Arama**: yeni motor (quiescence+TT+ID) eski sabit-derinlik motoru karşısında
+  **%80** (13G-1M-6B) — güç kazancının ana kaynağı.
+- **Model**: yeni 23-özellik LR, eski 12-özellik LR ile başa baş (%50). Yani yeni
+  özellikler oyun gücünü bozmadı ama tek başına belirgin artırmadı; asıl kazanç aramadan.
+
+> Süreçte bulunan kritik bir hata: kısa zaman bütçesinde arama zaman aşımına
+> uğrayınca tahta "kirli" kalıp botun **rakibin hamlesini** oynamasına yol
+> açıyordu. Düzeltildi (derinlik 1 her zaman tamamlanır + her derinlikte taze tahta).
 
 ## Çalıştırma
 

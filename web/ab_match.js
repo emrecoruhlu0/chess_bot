@@ -123,7 +123,7 @@ console.log(`A/B maci: ${N} oyun/es\n`);
   const evalOld = makeEvalOld(oldModel);
   const makeNewModel = () => pickerTimed(makeEngineNew(evalNew, Chess, {}), MAX_DEPTH, MOVE_TIME_MS);
   const makeOldModel = () => pickerTimed(makeEngineNew(evalOld, Chess, {}), MAX_DEPTH, MOVE_TIME_MS);
-  console.log(`(B) MODEL  A=yeni-model(MLP,23)  B=eski-model(LR,12)  (ayni motor, ${MOVE_TIME_MS}ms/hamle)`);
+  console.log(`(B) MODEL  A=yeni-model(${newModel.type},23)  B=eski-model(${oldModel.type},12)  (ayni motor, ${MOVE_TIME_MS}ms/hamle)`);
   const r = runMatch("model", makeNewModel, makeOldModel);
   const rate = (r.aWins + r.draws * 0.5) / N;
   console.log(`  -> yeni-model skoru: ${(rate * 100).toFixed(1)}%  (W${r.aWins}-L${r.bWins}-D${r.draws})\n`);
