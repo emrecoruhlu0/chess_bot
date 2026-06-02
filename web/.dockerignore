@@ -11,3 +11,15 @@ obj
 .env.*
 dist
 build
+
+# Test / deney / A-B dosyalari (runtime'da gerekmez)
+test_engine.js
+test_game.js
+verify_parity.js
+verify_eval.js
+ab_match.js
+_old_engine.js
+_old_evaluate.js
+_old_features.js
+model_old.json
+ab_result.txt
